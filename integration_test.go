@@ -22,7 +22,7 @@ import (
 
 	"math"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/tsuna/gohbase"
 	"github.com/tsuna/gohbase/filter"
 	"github.com/tsuna/gohbase/hrpc"
@@ -124,7 +124,6 @@ func TestMain(m *testing.M) {
 //Test retrieval of cluster status
 func TestClusterStatus(t *testing.T) {
 	ac := gohbase.NewAdminClient(*host)
-	defer ac.(gohbase.Client).Close()
 
 	stats, err := ac.ClusterStatus()
 	if err != nil {
@@ -180,7 +179,7 @@ func TestGet(t *testing.T) {
 		t.Fatalf("Failed to create Get request: %s", err)
 	}
 	_, err = c.Get(get)
-	if err != gohbase.ErrDeadline {
+	if err != context.DeadlineExceeded {
 		t.Errorf("Get ignored the deadline")
 	}
 }
@@ -319,7 +318,7 @@ func TestPut(t *testing.T) {
 	ctx, _ := context.WithTimeout(context.Background(), 0)
 	putRequest, err = hrpc.NewPutStr(ctx, table, key, values)
 	_, err = c.Put(putRequest)
-	if err != gohbase.ErrDeadline {
+	if err != context.DeadlineExceeded {
 		t.Errorf("Put ignored the deadline")
 	}
 }
@@ -1005,6 +1004,44 @@ func TestCheckAndPutParallel(t *testing.T) {
 		if !first && !second {
 			t.Error("CheckAndPut: both requests cannot fail")
 		}
+	}
+}
+
+func TestClose(t *testing.T) {
+	c := gohbase.NewClient(*host)
+
+	values := map[string]map[string][]byte{"cf": map[string][]byte{"a": []byte("1")}}
+	r, err := hrpc.NewPutStr(context.Background(), table, t.Name(), values)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Put(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.Close()
+
+	_, err = c.Put(r)
+	if err != gohbase.ErrClientClosed {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCloseWithoutMeta(t *testing.T) {
+	c := gohbase.NewClient(*host)
+	c.Close()
+
+	values := map[string]map[string][]byte{"cf": map[string][]byte{"a": []byte("1")}}
+	r, err := hrpc.NewPutStr(context.Background(), table, t.Name(), values)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Put(r)
+	if err != gohbase.ErrClientClosed {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

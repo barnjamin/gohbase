@@ -13,8 +13,8 @@ import (
 	"math"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/golang/protobuf/proto"
+	log "github.com/sirupsen/logrus"
 	"github.com/tsuna/gohbase/hrpc"
 	"github.com/tsuna/gohbase/pb"
 )
@@ -212,7 +212,7 @@ func (f *fetcher) fetch() {
 	for {
 		resp, region, err := f.next()
 		if err != nil {
-			if err != ErrDeadline {
+			if err != context.Canceled || err != context.DeadlineExceeded {
 				// if the context of the scan rpc wasn't cancelled (same as calling Close()),
 				// return the error to client
 				f.trySend(nil, err)

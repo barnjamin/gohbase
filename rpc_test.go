@@ -10,6 +10,7 @@ package gohbase
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -613,7 +614,7 @@ func TestFindRegion(t *testing.T) {
 
 			// check cache
 			if len(tcase.after) != c.regions.regions.Len() {
-				t.Errorf("Test %d: Expected to have %d regions in cache, got %d",
+				t.Errorf("Expected to have %d regions in cache, got %d",
 					len(tcase.after), c.regions.regions.Len())
 			}
 			for _, rn := range tcase.after {
@@ -680,7 +681,7 @@ func TestConcurrentRetryableError(t *testing.T) {
 
 	zkc := mockZk.NewMockClient(ctrl)
 	// keep failing on zookeeper lookup
-	zkc.EXPECT().LocateResource(gomock.Any()).Return("", ErrDeadline).AnyTimes()
+	zkc.EXPECT().LocateResource(gomock.Any()).Return("", errors.New("ooops")).AnyTimes()
 	c := newMockClient(zkc)
 	// create region with mock clien
 	origlReg := region.NewInfo(

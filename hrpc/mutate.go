@@ -82,6 +82,10 @@ func TTL(t time.Duration) func(Call) error {
 }
 
 // Timestamp sets timestamp for mutation queries.
+// The time object passed will be rounded to a millisecond resolution, as by default,
+// if no timestamp is provided, HBase sets it to current time in milliseconds.
+// In order to have custom time precision, use TimestampUint64 call option for
+// mutation requests and corresponding TimeRangeUint64 for retrieval requests.
 func Timestamp(ts time.Time) func(Call) error {
 	return func(o Call) error {
 		m, ok := o.(*Mutate)
@@ -89,6 +93,18 @@ func Timestamp(ts time.Time) func(Call) error {
 			return errors.New("'Timestamp' option can only be used with mutation queries")
 		}
 		m.timestamp = uint64(ts.UnixNano() / 1e6)
+		return nil
+	}
+}
+
+// TimestampUint64 sets timestamp for mutation queries.
+func TimestampUint64(ts uint64) func(Call) error {
+	return func(o Call) error {
+		m, ok := o.(*Mutate)
+		if !ok {
+			return errors.New("'TimestampUint64' option can only be used with mutation queries")
+		}
+		m.timestamp = ts
 		return nil
 	}
 }
@@ -113,9 +129,10 @@ func baseMutate(ctx context.Context, table, key string, values map[string]map[st
 	options ...func(Call) error) (*Mutate, error) {
 	m := &Mutate{
 		base: base{
-			table: []byte(table),
-			key:   []byte(key),
-			ctx:   ctx,
+			table:    []byte(table),
+			key:      []byte(key),
+			ctx:      ctx,
+			resultch: make(chan RPCResult, 1),
 		},
 		values:    values,
 		timestamp: MaxTimestamp,

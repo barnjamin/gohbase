@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/golang/protobuf/proto"
+	log "github.com/sirupsen/logrus"
 	"github.com/tsuna/gohbase/hrpc"
 	"github.com/tsuna/gohbase/region"
 	"github.com/tsuna/gohbase/zk"
@@ -28,9 +28,6 @@ var (
 	infoFamily = map[string][]string{
 		"info": nil,
 	}
-
-	// ErrDeadline is returned when the deadline of a request has been exceeded
-	ErrDeadline = errors.New("deadline exceeded")
 
 	// ErrRegionUnavailable is returned when sending rpc to a region that is unavailable
 	ErrRegionUnavailable = errors.New("region unavailable")
@@ -47,6 +44,9 @@ var (
 	// ErrMetaLookupThrottled is returned when a lookup for the rpc's region
 	// has been throttled.
 	ErrMetaLookupThrottled = errors.New("lookup to hbase:meta has been throttled")
+
+	// ErrClientClosed is returned when the gohbase client has been closed
+	ErrClientClosed = errors.New("client is closed")
 )
 
 const (
@@ -84,7 +84,9 @@ func (c *client) SendRPC(rpc hrpc.Call) (proto.Message, error) {
 				// a new region or for the deadline to be exceeded.
 				select {
 				case <-rpc.Context().Done():
-					return nil, ErrDeadline
+					return nil, rpc.Context().Err()
+				case <-c.done:
+					return nil, ErrClientClosed
 				case <-ch:
 				}
 			}
@@ -104,7 +106,7 @@ func sendBlocking(rc hrpc.RegionClient, rpc hrpc.Call) (hrpc.RPCResult, error) {
 	case res = <-rpc.ResultChan():
 		return res, nil
 	case <-rpc.Context().Done():
-		return res, ErrDeadline
+		return res, rpc.Context().Err()
 	}
 }
 
@@ -187,7 +189,6 @@ func (c *client) lookupRegion(ctx context.Context,
 	var err error
 	backoff := backoffStart
 	for {
-
 		// If it takes longer than regionLookupTimeout, fail so that we can sleep
 		lookupCtx, cancel := context.WithTimeout(ctx, c.regionLookupTimeout)
 		if c.clientType == adminClient {
@@ -220,6 +221,8 @@ func (c *client) lookupRegion(ctx context.Context,
 				return nil, "", err
 			} else if err == ErrMetaLookupThrottled {
 				return nil, "", err
+			} else if err == ErrClientClosed {
+				return nil, "", err
 			}
 		}
 		if err == nil {
@@ -249,7 +252,6 @@ func (c *client) lookupRegion(ctx context.Context,
 }
 
 func (c *client) findRegion(ctx context.Context, table, key []byte) (hrpc.RegionInfo, error) {
-
 	// The region was not in the cache, it
 	// must be looked up in the meta table
 	reg, addr, err := c.lookupRegion(ctx, table, key)
@@ -401,6 +403,12 @@ func fullyQualifiedTable(reg hrpc.RegionInfo) []byte {
 }
 
 func (c *client) reestablishRegion(reg hrpc.RegionInfo) {
+	select {
+	case <-c.done:
+		return
+	default:
+	}
+
 	log.WithField("region", reg).Debug("reestablishing region")
 	c.establishRegion(reg, "")
 }
@@ -486,6 +494,9 @@ func (c *client) establishRegion(reg hrpc.RegionInfo, addr string) {
 				// TODO: backoff might be unnecessary
 				reg = originalReg
 				continue
+			} else if err == ErrClientClosed {
+				// client has been closed
+				return
 			} else if err != nil {
 				log.WithFields(log.Fields{
 					"region":  originalReg.String(),
@@ -565,7 +576,7 @@ func sleepAndIncreaseBackoff(ctx context.Context, backoff time.Duration) (time.D
 	select {
 	case <-time.After(backoff):
 	case <-ctx.Done():
-		return 0, ErrDeadline
+		return 0, ctx.Err()
 	}
 	// TODO: Revisit how we back off here.
 	if backoff < 5000*time.Millisecond {
@@ -622,6 +633,6 @@ func (c *client) zkLookup(ctx context.Context, resource zk.ResourceName) (string
 	case res := <-reschan:
 		return res.addr, res.err
 	case <-ctx.Done():
-		return "", ErrDeadline
+		return "", ctx.Err()
 	}
 }
